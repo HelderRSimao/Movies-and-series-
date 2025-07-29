@@ -1,6 +1,1 @@
 
- * prevent double subscriptions, see later 
- fix sql  injetions for safety
- check ifsearch is woriking preoplry
- style instyle page and sicpt also
- navbar everywhere
