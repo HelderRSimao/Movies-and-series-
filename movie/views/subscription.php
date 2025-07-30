@@ -14,7 +14,7 @@ $user_id = $user['id'];
 $userRole = $user['role_id'] ?? 0;
 $isAdmin = isAdmin();
 
-// Fetch current subscription
+// Fetch current active subscription
 $stmt = $con->prepare("SELECT * FROM subscriptions WHERE user_id = ? AND status = 'active' ORDER BY end_date DESC LIMIT 1");
 $stmt->bind_param("i", $user_id);
 $stmt->execute();
@@ -25,21 +25,19 @@ $current_tier = $current_subscription['tier'] ?? 'free';
 $current_duration = $current_subscription['duration'] ?? 'none';
 $end_date = $current_subscription['end_date'] ?? null;
 
-// Logic
+$today = new DateTime();
 $can_downgrade = true;
 $can_resubscribe = true;
-$days_left = null;
-$today = new DateTime();
+$days_left = 0;
 
-if ($end_date) {
+if ($current_subscription && $end_date) {
     $end = new DateTime($end_date);
-    $days_left = (int)$today->diff($end)->format('%r%a');
+    $interval = $today->diff($end);
+    $days_left = (int) $interval->format('%r%a');
 
-    if ($current_subscription['status'] === 'active') {
-        $can_resubscribe = $days_left <= 10;
-        if ($current_duration === 'annual') {
-            $can_downgrade = $days_left <= 30;
-        }
+    if ($days_left > 10) $can_resubscribe = false;
+    if ($current_tier === 'tier2' && $current_duration === 'annual' && $days_left > 30) {
+        $can_downgrade = false;
     }
 }
 ?>
@@ -66,14 +64,13 @@ if ($end_date) {
       border-radius: 6px;
       transition: background 0.2s;
     }
-
     .dark-toggle:hover {
       background: rgba(255, 255, 255, 0.1);
     }
   </style>
 </head>
-<body>
 
+<body>
 <?php if ($userRole == 2): ?>
 <div id="sidebar" class="sidebar">
   <a href="../views/index.php">📺 My Page</a>
@@ -121,11 +118,12 @@ if ($end_date) {
 
   <?php if (!$can_downgrade && $current_tier === 'tier2'): ?>
     <div class="alert alert-warning">
-      ⛔ Downgrade from Tier 2 Annual is only allowed with 30 or fewer days left.
+      ⛔ You can only downgrade from Tier 2 when on a monthly plan or with less than 30 days left in an annual plan.
     </div>
   <?php endif; ?>
 
-  <form id="subscription-form">
+  <form id="subscription-form" <?= !$can_resubscribe ? 'style="pointer-events: none; opacity: 0.5;"' : '' ?>>
+    <input type="hidden" id="canResubscribe" value="<?= $can_resubscribe ? '1' : '0' ?>">
     <div class="mb-3">
       <label for="tier" class="form-label">Plan Type:</label>
       <select name="tier" id="tier" class="form-select" <?= !$can_resubscribe ? 'disabled' : '' ?> required>
@@ -153,11 +151,13 @@ if ($end_date) {
     </ul>
   </div>
 
+  <?php if ($can_resubscribe): ?>
   <div id="paypal-section" class="mt-4" style="display: none;">
     <h5>🔐 Checkout with PayPal</h5>
     <p>Total: <strong id="paypal-total">0.00 €</strong></p>
     <div id="paypal-button-container"></div>
   </div>
+  <?php endif; ?>
 
   <a href="index.php" class="btn btn-secondary mt-4">⬅️ Back to Home</a>
 </div>
@@ -172,8 +172,15 @@ const tierSelect = document.getElementById("tier");
 const durationSelect = document.getElementById("duration");
 const paypalSection = document.getElementById("paypal-section");
 const paypalTotal = document.getElementById("paypal-total");
+const canResubscribe = document.getElementById("canResubscribe").value === "1";
 
 function updatePayPal() {
+    if (!canResubscribe) {
+        paypalSection.style.display = "none";
+        document.getElementById("paypal-button-container").innerHTML = "";
+        return;
+    }
+
     const tier = tierSelect.value;
     const duration = durationSelect.value;
 
@@ -193,10 +200,7 @@ function updatePayPal() {
             },
             onApprove: function(data, actions) {
                 return actions.order.capture().then(function(details) {
-                    const confirmMsg = `Confirm subscription: ${tier.toUpperCase()} (${duration}) for €${total}?`;
-                    if (confirm(confirmMsg)) {
-                        window.location.href = `finishsubscription.php?tier=${tier}&duration=${duration}&amount=${total}`;
-                    }
+                    window.location.href = `finishsubscription.php?tier=${tier}&duration=${duration}&amount=${total}`;
                 });
             },
             onError: function(err) {
@@ -212,8 +216,8 @@ function updatePayPal() {
 
 tierSelect.addEventListener("change", updatePayPal);
 durationSelect.addEventListener("change", updatePayPal);
+</script>
 
 <script src="https://www.paypal.com/sdk/js?client-id=<?= $PAYPAL_CLIENT_ID ?>&currency=EUR"></script>
-
 </body>
 </html>
