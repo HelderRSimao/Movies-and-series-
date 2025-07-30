@@ -14,7 +14,7 @@ $user_id = $user['id'];
 $userRole = $user['role_id'] ?? 0;
 $isAdmin = isAdmin();
 
-// Fetch active subscription
+// Fetch current subscription
 $stmt = $con->prepare("SELECT * FROM subscriptions WHERE user_id = ? AND status = 'active' ORDER BY end_date DESC LIMIT 1");
 $stmt->bind_param("i", $user_id);
 $stmt->execute();
@@ -25,12 +25,22 @@ $current_tier = $current_subscription['tier'] ?? 'free';
 $current_duration = $current_subscription['duration'] ?? 'none';
 $end_date = $current_subscription['end_date'] ?? null;
 
+// Logic
 $can_downgrade = true;
+$can_resubscribe = true;
+$days_left = null;
 $today = new DateTime();
-if ($current_duration === 'annual' && $end_date) {
+
+if ($end_date) {
     $end = new DateTime($end_date);
     $days_left = (int)$today->diff($end)->format('%r%a');
-    $can_downgrade = $days_left <= 30;
+
+    if ($current_subscription['status'] === 'active') {
+        $can_resubscribe = $days_left <= 10;
+        if ($current_duration === 'annual') {
+            $can_downgrade = $days_left <= 30;
+        }
+    }
 }
 ?>
 <!DOCTYPE html>
@@ -43,29 +53,26 @@ if ($current_duration === 'annual' && $end_date) {
   <script src="https://cdn.jsdelivr.net/npm/bootstrap@5.3.3/dist/js/bootstrap.bundle.min.js"></script>
   <link href="https://fonts.googleapis.com/css2?family=Poppins:wght@400;600&display=swap" rel="stylesheet">
   <link rel="stylesheet" href="../css/fixable.css">
-
   <script src="../js/scripts.js"></script>
   <style>
     .dark-toggle {
-  background: transparent;
-  border: none;
-  font-size: 20px;
-  cursor: pointer;
-  color: var(--accent);
-  padding: 6px;
-  margin-left: 8px;
-  border-radius: 6px;
-  transition: background 0.2s;
-}
+      background: transparent;
+      border: none;
+      font-size: 20px;
+      cursor: pointer;
+      color: var(--accent);
+      padding: 6px;
+      margin-left: 8px;
+      border-radius: 6px;
+      transition: background 0.2s;
+    }
 
-.dark-toggle:hover {
-  background: rgba(255, 255, 255, 0.1);
-}
-
-    </style>
-    
+    .dark-toggle:hover {
+      background: rgba(255, 255, 255, 0.1);
+    }
+  </style>
 </head>
-
+<body>
 
 <?php if ($userRole == 2): ?>
 <div id="sidebar" class="sidebar">
@@ -105,16 +112,23 @@ if ($current_duration === 'annual' && $end_date) {
   <h2>📦 Choose a Subscription Plan</h2>
   <p>Your current plan: <strong><?= ucfirst($current_tier) ?> (<?= $current_duration ?>)</strong></p>
 
+  <?php if (!$can_resubscribe && $current_subscription): ?>
+    <div class="alert alert-info">
+      ✅ You already have an active subscription ending on <strong><?= $end_date ?></strong>.<br>
+      You can only subscribe again when there are 10 or fewer days remaining (currently <strong><?= $days_left ?></strong> days left).
+    </div>
+  <?php endif; ?>
+
   <?php if (!$can_downgrade && $current_tier === 'tier2'): ?>
     <div class="alert alert-warning">
-      ⛔ You can only downgrade from Tier 2 when on a monthly plan or with less than 30 days left in an annual plan.
+      ⛔ Downgrade from Tier 2 Annual is only allowed with 30 or fewer days left.
     </div>
   <?php endif; ?>
 
   <form id="subscription-form">
     <div class="mb-3">
       <label for="tier" class="form-label">Plan Type:</label>
-      <select name="tier" id="tier" class="form-select" required>
+      <select name="tier" id="tier" class="form-select" <?= !$can_resubscribe ? 'disabled' : '' ?> required>
         <option value="">-- Select Tier --</option>
         <option value="tier1" <?= (!$can_downgrade && $current_tier === 'tier2') ? 'disabled' : '' ?>>Tier 1 - Basic Content</option>
         <option value="tier2">Tier 2 - Full Content</option>
@@ -123,7 +137,7 @@ if ($current_duration === 'annual' && $end_date) {
 
     <div class="mb-3">
       <label for="duration" class="form-label">Duration:</label>
-      <select name="duration" id="duration" class="form-select" required>
+      <select name="duration" id="duration" class="form-select" <?= !$can_resubscribe ? 'disabled' : '' ?> required>
         <option value="">-- Select Duration --</option>
         <option value="monthly">Monthly</option>
         <option value="annual">Annual</option>
@@ -179,7 +193,10 @@ function updatePayPal() {
             },
             onApprove: function(data, actions) {
                 return actions.order.capture().then(function(details) {
-                    window.location.href = `finishsubscription.php?tier=${tier}&duration=${duration}&amount=${total}`;
+                    const confirmMsg = `Confirm subscription: ${tier.toUpperCase()} (${duration}) for €${total}?`;
+                    if (confirm(confirmMsg)) {
+                        window.location.href = `finishsubscription.php?tier=${tier}&duration=${duration}&amount=${total}`;
+                    }
                 });
             },
             onError: function(err) {
@@ -195,7 +212,6 @@ function updatePayPal() {
 
 tierSelect.addEventListener("change", updatePayPal);
 durationSelect.addEventListener("change", updatePayPal);
-</script>
 
 <script src="https://www.paypal.com/sdk/js?client-id=<?= $PAYPAL_CLIENT_ID ?>&currency=EUR"></script>
 
