@@ -22,8 +22,16 @@ if (!$isAdmin) {
     $subscription = $res->fetch_assoc();
 }
 
-$error = '';
+// Handle query string feedback
 $success = '';
+$error = '';
+if (isset($_GET['success'])) {
+    if ($_GET['success'] === 'info') {
+        $success = "Information updated successfully.";
+    } elseif ($_GET['success'] === 'password') {
+        $success = "Password changed successfully.";
+    }
+}
 
 if ($_SERVER['REQUEST_METHOD'] === 'POST') {
     if (!$isAdmin && ($_POST['action'] ?? '') === 'cancel_subscription' && $subscription && $subscription['status'] === 'active') {
@@ -37,13 +45,30 @@ if ($_SERVER['REQUEST_METHOD'] === 'POST') {
     if (($_POST['action'] ?? '') === 'update_info') {
         $new_email = trim($_POST['new_email'] ?? '');
         $new_username = trim($_POST['new_username'] ?? '');
-        if ($new_email && $new_username) {
-            $stmt = $con->prepare("UPDATE users SET email = ?, username = ? WHERE id = ?");
-            $stmt->bind_param("ssi", $new_email, $new_username, $user_id);
-            $stmt->execute();
-            $_SESSION['user']['email'] = $new_email;
-            $_SESSION['user']['username'] = $new_username;
-            $success = "Information updated successfully.";
+
+        if ($new_email || $new_username) {
+            if ($new_email && !$new_username) {
+                $stmt = $con->prepare("UPDATE users SET email = ? WHERE id = ?");
+                $stmt->bind_param("si", $new_email, $user_id);
+                $stmt->execute();
+                $_SESSION['user']['email'] = $new_email;
+            } elseif ($new_username && !$new_email) {
+                $stmt = $con->prepare("UPDATE users SET username = ? WHERE id = ?");
+                $stmt->bind_param("si", $new_username, $user_id);
+                $stmt->execute();
+                $_SESSION['user']['username'] = $new_username;
+            } elseif ($new_email && $new_username) {
+                $stmt = $con->prepare("UPDATE users SET email = ?, username = ? WHERE id = ?");
+                $stmt->bind_param("ssi", $new_email, $new_username, $user_id);
+                $stmt->execute();
+                $_SESSION['user']['email'] = $new_email;
+                $_SESSION['user']['username'] = $new_username;
+            }
+
+            header("Location: " . $_SERVER['PHP_SELF'] . "?success=info");
+            exit();
+        } else {
+            $error = "Please enter at least one value to update.";
         }
     }
 
@@ -62,7 +87,8 @@ if ($_SERVER['REQUEST_METHOD'] === 'POST') {
                 $stmt = $con->prepare("UPDATE users SET password = ? WHERE id = ?");
                 $stmt->bind_param("si", $hash, $user_id);
                 $stmt->execute();
-                $success = "Password changed successfully.";
+                header("Location: " . $_SERVER['PHP_SELF'] . "?success=password");
+                exit();
             } else {
                 $error = "Password must be at least 6 characters.";
             }
@@ -84,12 +110,6 @@ if ($_SERVER['REQUEST_METHOD'] === 'POST') {
 <script src="../js/scripts.js"></script>
 <link rel="stylesheet" href="../css/style.css">
 <style>
-
-
-
-
-
-
 .dark-toggle {
   background: transparent;
   color: #fff;
@@ -127,19 +147,16 @@ if ($_SERVER['REQUEST_METHOD'] === 'POST') {
   font-weight: 500;
 }
 
-
 .container {
   padding-top: 100px;
   max-width: 700px;
   margin: auto;
 }
 
-
 h2, h4 {
   margin-bottom: 20px;
   font-weight: 600;
 }
-
 
 form {
   margin-bottom: 30px;
@@ -157,7 +174,6 @@ form .form-label {
   font-weight: 500;
 }
 
-/* Buttons */
 .btn {
   padding: 8px 14px;
   font-size: 14px;
@@ -179,7 +195,6 @@ form .form-label {
   opacity: 0.9;
 }
 
-/* Alert messages */
 .alert {
   padding: 10px 15px;
   border-radius: 6px;
@@ -209,11 +224,11 @@ form .form-label {
 </style>
 </head>
 
-
+<body>
 <?php if ($userRole == 2): ?>
 <div id="sidebar" class="sidebar">
   <a href="../views/index.php">📺 My Page</a>
-  <a href="../admin/dashboard.php" >📈 Insights</a>
+  <a href="../admin/dashboard.php">📈 Insights</a>
   <a href="../admin/library.php">📂 Library</a>
   <a href="../admin/libraryc.php">📂 Library collection</a>
   <a href="../admin/librarym.php">📂 Library movie</a>
@@ -245,73 +260,72 @@ form .form-label {
 </div>
 
 <div class="container mt-5 pt-5">
-    <h2>Hello, <?= htmlspecialchars($user['username']) ?></h2>
+  <h2>Hello, <?= htmlspecialchars($user['username']) ?></h2>
 
-    <?php if (!$isAdmin): ?>
-        <h4 class="mt-4">🧾 Subscription</h4>
-        <?php
-        $today = date('Y-m-d');
-        if ($subscription) {
-            $status = $subscription['status'];
-            $tier = $subscription['tier'];
-            $start = $subscription['start_date'];
-            $end = $subscription['end_date'];
-            echo "<p>Tier: <strong>" . ucfirst($tier) . "</strong></p>";
-            echo "<p>Status: <strong>" . ucfirst($status) . "</strong></p>";
-            echo "<p>Valid From: $start to $end</p>";
+  <?php if (!$isAdmin): ?>
+    <h4 class="mt-4">🧾 Subscription</h4>
+    <?php
+    $today = date('Y-m-d');
+    if ($subscription) {
+        $status = $subscription['status'];
+        $tier = $subscription['tier'];
+        $start = $subscription['start_date'];
+        $end = $subscription['end_date'];
+        echo "<p>Tier: <strong>" . ucfirst($tier) . "</strong></p>";
+        echo "<p>Status: <strong>" . ucfirst($status) . "</strong></p>";
+        echo "<p>Valid From: $start to $end</p>";
 
-            if ($status === 'active') {
-                echo '<form method="POST">
-                        <input type="hidden" name="action" value="cancel_subscription" />
-                        <button type="submit" class="btn btn-warning">⏸ Cancel Subscription</button>
-                      </form>';
-            } elseif ($status === 'cancel' && $end >= $today) {
-                echo "<p class='text-warning'>⏳ Subscription canceled but still valid until <strong>$end</strong></p>";
-            } else {
-                echo "<p class='text-danger'>❌ Subscription expired or invalid.</p>";
-                echo '<a href="subscription.php" class="btn btn-primary">📋 Subscribe Again</a>';
-            }
+        if ($status === 'active') {
+            echo '<form method="POST">
+                    <input type="hidden" name="action" value="cancel_subscription" />
+                    <button type="submit" class="btn btn-warning">⏸ Cancel Subscription</button>
+                  </form>';
+        } elseif ($status === 'cancel' && $end >= $today) {
+            echo "<p class='text-warning'>⏳ Subscription canceled but still valid until <strong>$end</strong></p>";
         } else {
-            echo "<p class='text-danger'>❌ No active subscription.</p>";
-            echo '<a href="subscription.php" class="btn btn-primary">📋 Choose a Plan</a>';
+            echo "<p class='text-danger'>❌ Subscription expired or invalid.</p>";
+            echo '<a href="subscription.php" class="btn btn-primary">📋 Subscribe Again</a>';
         }
-        ?>
-    <?php endif; ?>
+    } else {
+        echo "<p class='text-danger'>❌ No active subscription.</p>";
+        echo '<a href="subscription.php" class="btn btn-primary">📋 Choose a Plan</a>';
+    }
+    ?>
+  <?php endif; ?>
 
-    <hr>
-    <h4>🛠 Update Info</h4>
-    <?php if ($success): ?><div class="alert alert-success"><?= htmlspecialchars($success) ?></div><?php endif; ?>
-    <form method="POST">
-        <input type="hidden" name="action" value="update_info">
-        <div class="mb-3">
-            <label class="form-label">Current Email:</label>
-            <p><strong><?= htmlspecialchars($user['email']) ?></strong></p>
-            <input type="email" name="new_email" class="form-control"  required>
-        </div>
-        <div class="mb-3">
-            <label class="form-label">Current Username:</label>
-            <p><strong><?= htmlspecialchars($user['username']) ?></strong></p>
-            <input type="text" name="new_username" class="form-control"  required>
-        </div>
-        <button type="submit" class="btn btn-primary">💾 Update Info</button>
-    </form>
+  <hr>
+  <h4>🛠 Update Info</h4>
+  <?php if ($success): ?><div class="alert alert-success"><?= htmlspecialchars($success) ?></div><?php endif; ?>
+  <?php if ($error): ?><div class="alert alert-danger"><?= htmlspecialchars($error) ?></div><?php endif; ?>
+  <form method="POST">
+    <input type="hidden" name="action" value="update_info">
+    <div class="mb-3">
+      <label class="form-label">Current Email:</label>
+      <p><strong><?= htmlspecialchars($user['email']) ?></strong></p>
+      <input type="email" name="new_email" class="form-control">
+    </div>
+    <div class="mb-3">
+      <label class="form-label">Current Username:</label>
+      <p><strong><?= htmlspecialchars($user['username']) ?></strong></p>
+      <input type="text" name="new_username" class="form-control">
+    </div>
+    <button type="submit" class="btn btn-primary">💾 Update Info</button>
+  </form>
 
-    <hr>
-    <h4>🔐 Change Password</h4>
-    <?php if ($error): ?><div class="alert alert-danger"><?= htmlspecialchars($error) ?></div><?php endif; ?>
-    <form method="POST">
-        <input type="hidden" name="action" value="change_password">
-        <div class="mb-3">
-            <label class="form-label">Current Password:</label>
-            <input type="password" name="current_password" class="form-control" required>
-        </div>
-        <div class="mb-3">
-            <label class="form-label">New Password:</label>
-            <input type="password" name="new_password" class="form-control" minlength="6" required>
-        </div>
-        <button type="submit" class="btn btn-primary">🔒 Change Password</button>
-    </form>
+  <hr>
+  <h4>🔐 Change Password</h4>
+  <form method="POST">
+    <input type="hidden" name="action" value="change_password">
+    <div class="mb-3">
+      <label class="form-label">Current Password:</label>
+      <input type="password" name="current_password" class="form-control" required>
+    </div>
+    <div class="mb-3">
+      <label class="form-label">New Password:</label>
+      <input type="password" name="new_password" class="form-control" minlength="6" required>
+    </div>
+    <button type="submit" class="btn btn-primary">🔒 Change Password</button>
+  </form>
 </div>
-
 </body>
 </html>
